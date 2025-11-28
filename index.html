@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Validador de Códigos Eventbrite (Claro)</title>
+    <!-- Incluyendo Tailwind CSS via CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Configuración global de fuente y fondo CLARO */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f7f7; /* Fondo muy claro */
+            color: #333333; /* Texto oscuro */
+            min-height: 100vh;
+        }
+
+        /* ------------------------------------------------ */
+        /* CSS para el Overlay de Carga (Spinner) */
+        /* ------------------------------------------------ */
+        #loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(247, 247, 247, 0.95); /* Fondo claro semi-transparente */
+            display: none; 
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000; 
+            text-align: center;
+            color: #457b9d; /* Azul de acento */
+            font-size: 1.8em; 
+            font-weight: bold;
+            transition: opacity 0.5s ease;
+        }
+        .spinner {
+            border: 8px solid #e0e0e0; /* Fondo del aro (Gris muy claro) */
+            border-top: 8px solid #457b9d; /* Color del spinner (Azul de acento) */
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+            animation: spin 2s linear infinite;
+            margin-bottom: 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* ------------------------------------------------ */
+        /* CSS para el Overlay de Resultado a Pantalla Completa */
+        /* ------------------------------------------------ */
+        #result-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: none; /* Oculto por defecto */
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 2000;
+            transition: background-color 0.3s;
+            text-align: center;
+            font-size: 1.5em; 
+            font-weight: bold;
+            color: white; /* El color se define por las clases de estado */
+            padding: 20px;
+            box-sizing: border-box;
+            overflow: auto;
+        }
+        /* Clases de estado para el nuevo overlay */
+        .overlay-ok { background-color: #10b981; } /* Verde Esmeralda para OK */
+        .overlay-used { background-color: #f59e0b; } /* Amarillo Oscuro para usado */
+        .overlay-not-found { background-color: #ef4444; } /* Rojo Fuerte para no encontrado */
+
+        /* Estilos para iconos */
+        #result-icon {
+            font-size: 5em;
+            margin-bottom: 20px;
+        }
+
+        /* Estilos para la caja informativa de validación */
+        /* Usando una paleta más clara */
+        .status-ok { background-color: #d1fae5; color: #065f46; border: 2px solid #a7f3d0; } /* Verde Pastel */
+        .status-used { background-color: #fef3c7; color: #92400e; border: 2px solid #fde68a; } /* Amarillo Pastel */
+        .status-not-found { background-color: #fee2e2; color: #991b1b; border: 2px solid #fecaca; } /* Rojo Pastel */
+        .status-pending { background-color: #e0f2fe; color: #075985; border: 2px solid #93c5fd; } /* Azul Pastel */
+    </style>
+</head>
+<body class="flex flex-col items-center p-4 sm:p-8">
+    
+    <!-- Contenedor principal de la aplicación -->
+    <!-- Se actualiza a fondo blanco (bg-white) y sombras claras -->
+    <div class="w-full max-w-xl bg-white p-6 sm:p-8 rounded-xl shadow-xl transition duration-300" id="main-app" style="display: none;">
+        <h1 class="text-3xl sm:text-4xl font-bold mb-8 text-center text-blue-700">
+            🎟️ Validador
+        </h1>
+
+        <!-- Botón de sincronización -->
+        <div class="space-y-4 mb-6">
+            <button id="sync-button" class="w-full px-6 py-3 text-lg font-semibold text-white bg-green-600 rounded-lg shadow-md hover:bg-green-700 focus:outline-none focus:ring-4 focus:ring-green-500 focus:ring-opacity-50 transition duration-150 ease-in-out disabled:bg-green-400 disabled:opacity-70 disabled:cursor-not-allowed">
+                Actualizar códigos desde Eventbrite
+            </button>
+        </div>
+
+        <!-- Estado de carga/sincronización -->
+        <!-- Cambiado a fondo gris muy claro y texto oscuro -->
+        <div id="file-upload" class="p-3 bg-gray-100 rounded-lg mb-6">
+            <div id="file-status" class="text-sm text-gray-700">Iniciando carga...</div>
+        </div>
+
+        <!-- Entrada de Código de Barras -->
+        <div class="mb-8">
+            <label for="barcode-input" class="block text-lg font-medium text-gray-600 mb-2">
+                Escanee Código de Barras:
+            </label>
+            <!-- Cambiado a fondo blanco/claro y borde de acento azul -->
+            <input type="text" id="barcode-input" placeholder="Esperando datos..." disabled 
+                   class="w-full p-4 text-xl bg-white border-2 border-blue-400 rounded-lg focus:ring-blue-500 focus:border-blue-500 text-gray-800 placeholder-gray-400 transition duration-150 ease-in-out focus:outline-none">
+        </div>
+
+        <!-- Pequeño resultado de validación (usando las nuevas clases pastel) -->
+        <div id="validation-result" class="text-center font-bold text-lg p-5 rounded-lg border-2 status-pending transition duration-300">
+            Esperando códigos Eventbrite...
+        </div>
+    </div>
+
+    <!-- Overlay de Carga (CSS actualizado para colores claros) -->
+    <div id="loading-overlay">
+        <div class="spinner"></div>
+        <div id="loading-message">CARGANDO CÓDIGOS DE EVENTBRITE...</div>
+        <div id="loading-page-status" class="text-sm mt-3 opacity-70"></div>
+    </div>
+    
+    <!-- Overlay de Resultado a Pantalla Completa (Colores se definen por clase .overlay-*) -->
+    <div id="result-overlay">
+        <div id="result-icon"></div>
+        <div id="result-text"></div>
+    </div>
+
+    <script>
+        // =====================================================================
+        // === app.js: Validador con Persistencia Local y Sincronización Manual ===
+        // =====================================================================
+
+        // ADVERTENCIA: La clave API se mantiene por petición del usuario,
+        // pero para producción, esta clave debe residir en un backend seguro.
+        const EVENTBRITE_EVENT_ID = '1796505409039';
+        const API_KEY = 'KWI3KSKYDKQ7C6ZLSA2X'; 
+        const API_BASE_URL = `https://www.eventbriteapi.com/v3/events/${EVENTBRITE_EVENT_ID}/attendees/`;
+
+        // Clave única para guardar los datos en el localStorage
+        const STORAGE_KEY = `eventbrite_tickets_${EVENTBRITE_EVENT_ID}`;
+
+        let eventbriteTickets = null; 
+        let allAttendees = []; // Variable auxiliar para la paginación
+        let isProcessingCode = false; // Bloquea el escaneo mientras se muestra el resultado
+
+        const barcodeInput = document.getElementById('barcode-input');
+        const resultDiv = document.getElementById('validation-result');
+        const fileStatusDiv = document.getElementById('file-status');
+        const fileInputGroup = document.getElementById('file-upload'); 
+        const syncButton = document.getElementById('sync-button');
+
+        const loadingOverlay = document.getElementById('loading-overlay');
+        const loadingPageStatus = document.getElementById('loading-page-status');
+        // Referencias para el nuevo overlay
+        const resultOverlay = document.getElementById('result-overlay');
+        const resultIcon = document.getElementById('result-icon');
+        const resultText = document.getElementById('result-text');
+
+
+        // ---------------------------------------------------------------------
+        // 1. Control de Persistencia (localStorage)
+        // ---------------------------------------------------------------------
+
+        function saveTicketsToLocalStorage(tickets) {
+            try {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(tickets));
+                console.log(`Datos guardados en localStorage. Total: ${tickets.length}`);
+            } catch (e) {
+                console.error("Error al guardar en localStorage:", e);
+            }
+        }
+
+        function loadTicketsFromLocalStorage() {
+            try {
+                const jsonString = localStorage.getItem(STORAGE_KEY);
+                if (jsonString) {
+                    return JSON.parse(jsonString);
+                }
+                return null;
+            } catch (e) {
+                console.error("Error al cargar o parsear desde localStorage:", e);
+                return null;
+            }
+        }
+
+        function processAttendeesToTickets(attendees) {
+            return attendees.map(attendee => {
+                let barcode = '';
+                if (attendee.barcodes && attendee.barcodes.length > 0) {
+                    barcode = attendee.barcodes[0].barcode || ''; 
+                }
+                
+                return {
+                    barcode: barcode,
+                    status: attendee.status.toUpperCase() || 'N/A'
+                };
+            }).filter(item => item.barcode);
+        }
+
+        // ---------------------------------------------------------------------
+        // 2. Control del Spinner y UI
+        // ---------------------------------------------------------------------
+
+        function showLoadingScreen() {
+            loadingOverlay.style.opacity = '1';
+            loadingOverlay.style.display = 'flex';
+            // Deshabilitar la app durante la carga
+            barcodeInput.disabled = true;
+            syncButton.disabled = true; 
+            // Usamos un color de texto oscuro para el mensaje de carga en el tema claro
+            loadingOverlay.querySelector('#loading-message').style.color = '#1d3557';
+            resultDiv.textContent = 'CARGANDO CÓDIGOS DE EVENTBRITE...';
+        }
+
+        function hideLoadingScreen() {
+            loadingOverlay.style.opacity = '0';
+            setTimeout(() => {
+                loadingOverlay.style.display = 'none';
+                const mainApp = document.getElementById('main-app');
+                mainApp.style.display = 'block'; 
+                // Habilitar la app y el botón después de la carga
+                barcodeInput.disabled = false;
+                syncButton.disabled = false; 
+            }, 500);
+        }
+
+        /**
+         * Inicializa la app una vez que los datos están disponibles (ya sea por API o localStorage).
+         */
+        function initializeApp(success, errorMessage = '') {
+            hideLoadingScreen(); 
+            
+            if (fileInputGroup) {
+                fileInputGroup.style.display = 'block'; // Mostrar de nuevo el estado de la sincronización
+            }
+
+            if (success && eventbriteTickets) {
+                fileStatusDiv.textContent = `✅ Listo. ${eventbriteTickets.length} códigos cargados desde la memoria local.`;
+                barcodeInput.focus(); 
+                // Aplicamos la clase de estado pendiente (azul pastel)
+                resultDiv.className = 'text-center font-bold text-lg p-5 rounded-lg border-2 status-pending transition duration-300';
+                resultDiv.textContent = '¡Listo para escanear!';
+            } else {
+                fileStatusDiv.textContent = `❌ Fallo en la carga de datos. ${errorMessage || 'No hay datos disponibles.'}`;
+                barcodeInput.disabled = true;
+                // Aplicamos la clase de estado no encontrado (rojo pastel)
+                resultDiv.className = 'text-center font-bold text-lg p-5 rounded-lg border-2 status-not-found transition duration-300';
+                resultDiv.textContent = 'ERROR DE DATOS.';
+            }
+        }
+
+        // ---------------------------------------------------------------------
+        // 3. Flujo de Sincronización API (fetchAttendeesPage y startSync)
+        // ---------------------------------------------------------------------
+
+        async function fetchAttendeesPage(pageNumber) {
+            if (pageNumber === 1) {
+                allAttendees = []; // Limpiar para una nueva sincronización
+            }
+            const url = `${API_BASE_URL}?page=${pageNumber}`;
+            loadingPageStatus.textContent = `Página: ${pageNumber} | Asistentes cargados: ${allAttendees.length}`;
+            
+            try {
+                const response = await fetch(url, {
+                    headers: { 'Authorization': `Bearer ${API_KEY}` }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Error ${response.status}: ${response.statusText}`);
+                }
+
+                const data = await response.json();
+                allAttendees = allAttendees.concat(data.attendees);
+                const pagination = data.pagination;
+
+                if (pagination.has_more_items) {
+                    await fetchAttendeesPage(pagination.page_number + 1);
+                } else {
+                    // FIN DE PAGINACIÓN: Procesar, GUARDAR y habilitar
+                    eventbriteTickets = processAttendeesToTickets(allAttendees);
+                    saveTicketsToLocalStorage(eventbriteTickets); 
+                    initializeApp(true); 
+                }
+
+            } catch (error) {
+                // En caso de error, mostrar el error y forzar la aplicación a cargar lo que haya en local (si existe)
+                console.error("Error al obtener los asistentes de la API:", error);
+                
+                // Si falló la API pero hay datos viejos en local, cargar esos datos
+                const localData = loadTicketsFromLocalStorage();
+                if (localData) {
+                    eventbriteTickets = localData;
+                    initializeApp(true);
+                    fileStatusDiv.textContent = `⚠️ Error al sincronizar. Usando datos guardados (${eventbriteTickets.length} códigos).`;
+                } else {
+                    initializeApp(false, `Error de conexión. ${error.message}.`);
+                }
+            }
+        }
+
+        function startSync() {
+            showLoadingScreen();
+            loadingPageStatus.textContent = ''; 
+            fetchAttendeesPage(1);
+        }
+
+        // ---------------------------------------------------------------------
+        // 4. Lógica de Validación (Modificada para usar el Overlay)
+        // ---------------------------------------------------------------------
+
+        barcodeInput.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                event.preventDefault(); 
+                
+                // Bloquear si se está procesando un código (anti-doble escaneo)
+                if (isProcessingCode) {
+                    console.log("Input bloqueado. Esperando fin del temporizador.");
+                    barcodeInput.value = ''; // Limpiar la entrada inmediatamente
+                    return;
+                }
+                
+                const scannedBarcode = barcodeInput.value.trim();
+                barcodeInput.value = '';
+                
+                if (scannedBarcode && eventbriteTickets) {
+                    isProcessingCode = true; // Bloqueamos antes de la validación
+                    barcodeInput.disabled = true; // Deshabilitamos el input
+                    validateTicket(scannedBarcode);
+                } else if (!eventbriteTickets) {
+                    showFullscreenResult('❌ Espera a que la carga de códigos finalice.', 'overlay-not-found', '🛑', 2000);
+                }
+            }
+        });
+
+        function validateTicket(barcode) {
+            const ticket = eventbriteTickets.find(t => t.barcode === barcode);
+
+            if (!ticket) {
+                showFullscreenResult(`❌ CÓDIGO NO ENCONTRADO`, 'overlay-not-found', '🚫', 2000, barcode);
+            } else {
+                const status = ticket.status;
+                
+                if (status === 'ATTENDING') {
+                    showFullscreenResult(`✅ CÓDIGO VÁLIDO`, 'overlay-ok', '👍', 2000, barcode);
+                    
+                    // CAMBIO DE ESTADO Y PERSISTENCIA
+                    ticket.status = 'CHECKED_IN'; 
+                    saveTicketsToLocalStorage(eventbriteTickets); // ¡Guardar el estado actualizado!
+
+                } else if (status === 'CHECKED_IN') {
+                    showFullscreenResult(`⚠️ CÓDIGO YA USADO`, 'overlay-used', '⚠️', 2000, barcode);
+                } else {
+                    showFullscreenResult(`❌ ESTADO INVÁLIDO (${status})`, 'overlay-not-found', '🛑', 2000, barcode);
+                }
+            }
+        }
+
+        /**
+         * Muestra el resultado a pantalla completa y lo oculta tras un tiempo.
+         * Desbloquea el escaneo después del temporizador.
+         */
+        function showFullscreenResult(mainMessage, className, icon, duration = 2000, barcode = '') {
+            
+            // Texto grande del overlay
+            resultText.innerHTML = `<span class="block text-5xl sm:text-7xl mb-4">${mainMessage}</span>`;
+            if (barcode) {
+                resultText.innerHTML += `<span class="block text-2xl sm:text-3xl opacity-80 mt-2">${barcode}</span>`;
+            }
+            
+            resultIcon.textContent = icon;
+            resultOverlay.className = ''; // Limpiar clases anteriores
+            resultOverlay.classList.add('flex', className);
+            resultOverlay.style.display = 'flex'; // Mostrar overlay
+
+            // Opcional: Ocultar la app principal para una vista más limpia
+            document.getElementById('main-app').style.display = 'none';
+            
+            // Temporizador
+            setTimeout(() => {
+                resultOverlay.style.display = 'none'; // Ocultar overlay
+                document.getElementById('main-app').style.display = 'block'; // Mostrar app principal
+                
+                isProcessingCode = false; // DESBLOQUEAR la posibilidad de escaneo
+                barcodeInput.disabled = false; // Habilitar el input
+                barcodeInput.focus(); // Volver a enfocar el input para el siguiente escaneo
+                resultDiv.textContent = 'Esperando escaneo...';
+                // Volver al estado pendiente con la clase pastel
+                resultDiv.className = 'text-center font-bold text-lg p-5 rounded-lg border-2 status-pending transition duration-300';
+            }, duration); 
+        }
+
+        // ---------------------------------------------------------------------
+        // 5. Arranque Principal
+        // ---------------------------------------------------------------------
+
+        document.addEventListener('DOMContentLoaded', () => {
+            // 1. Asignar el evento al botón de sincronización
+            syncButton.addEventListener('click', startSync);
+
+            // 2. Intentar cargar desde la persistencia local
+            eventbriteTickets = loadTicketsFromLocalStorage();
+            
+            if (eventbriteTickets) {
+                // Los datos existen localmente, saltar la API y habilitar la app
+                initializeApp(true);
+            } else {
+                // No hay datos locales, forzar la primera carga desde la API
+                startSync(); 
+            }
+        });
+    </script>
+</body>
+</html>

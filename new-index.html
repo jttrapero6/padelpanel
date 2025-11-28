@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Validador de Códigos Eventbrite (Firestore)</title>
+    <!-- Incluyendo Tailwind CSS via CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Configuración global de fuente y fondo CLARO */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f7f7; /* Fondo muy claro */
+            color: #333333; /* Texto oscuro */
+            min-height: 100vh;
+        }
+
+        /* ------------------------------------------------ */
+        /* CSS para el Overlay de Carga (Spinner) */
+        /* ------------------------------------------------ */
+        #loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(247, 247, 247, 0.95); /* Fondo claro semi-transparente */
+            display: none;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            text-align: center;
+            color: #457b9d; /* Azul de acento */
+            font-size: 1.8em;
+            font-weight: bold;
+            transition: opacity 0.5s ease;
+        }
+        .spinner {
+            border: 8px solid #e0e0e0; /* Fondo del aro (Gris muy claro) */
+            border-top: 8px solid #457b9d; /* Color del spinner (Azul de acento) */
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+            animation: spin 2s linear infinite;
+            margin-bottom: 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* ------------------------------------------------ */
+        /* CSS para el Overlay de Resultado a Pantalla Completa */
+        /* ------------------------------------------------ */
+        #result-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: none; /* Oculto por defecto */
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 2000;
+            transition: background-color 0.3s;
+            text-align: center;
+            font-size: 1.5em;
+            font-weight: bold;
+            color: white; /* El color se define por las clases de estado */
+            padding: 20px;
+            box-sizing: border-box;
+            overflow: auto;
+        }
+        /* Clases de estado para el nuevo overlay */
+        .overlay-ok { background-color: #10b981; } /* Verde Esmeralda para OK */
+        .overlay-used { background-color: #f59e0b; } /* Amarillo Oscuro para usado */
+        .overlay-not-found { background-color: #ef4444; } /* Rojo Fuerte para no encontrado */
+
+        /* Estilos para iconos */
+        #result-icon {
+            font-size: 5em;
+            margin-bottom: 20px;
+        }
+
+        /* Estilos para la caja informativa de validación */
+        .status-ok { background-color: #d1fae5; color: #065f46; border: 2px solid #a7f3d0; } /* Verde Pastel */
+        .status-used { background-color: #fef3c7; color: #92400e; border: 2px solid #fde68a; } /* Amarillo Pastel */
+        .status-not-found { background-color: #fee2e2; color: #991b1b; border: 2px solid #fecaca; } /* Rojo Pastel */
+        .status-pending { background-color: #e0f2fe; color: #075985; border: 2px solid #93c5fd; } /* Azul Pastel */
+    </style>
+</head>
+<body class="flex flex-col items-center p-4 sm:p-8">
+
+    <!-- Contenedor principal de la aplicación -->
+    <div class="w-full max-w-xl bg-white p-6 sm:p-8 rounded-xl shadow-xl transition duration-300" id="main-app" style="display: none;">
+        <h1 class="text-3xl sm:text-4xl font-bold mb-8 text-center text-blue-700">
+            🎟️ Validador Eventbrite
+        </h1>
+        
+        <p id="user-id-display" class="text-xs text-center text-gray-400 mb-4">Autenticando...</p>
+
+        <!-- Botón de sincronización -->
+        <div class="space-y-4 mb-6">
+            <button id="sync-button" class="w-full px-6 py-3 text-lg font-semibold text-white bg-green-600 rounded-lg shadow-md hover:bg-green-700 focus:outline-none focus:ring-4 focus:ring-green-500 focus:ring-opacity-50 transition duration-150 ease-in-out disabled:bg-green-400 disabled:opacity-70 disabled:cursor-not-allowed">
+                Actualizar códigos desde Eventbrite (a Firestore)
+            </button>
+        </div>
+
+        <!-- Estado de carga/sincronización -->
+        <div id="file-upload" class="p-3 bg-gray-100 rounded-lg mb-6">
+            <div id="file-status" class="text-sm text-gray-700">Iniciando carga y autenticación...</div>
+        </div>
+
+        <!-- Entrada de Código de Barras -->
+        <div class="mb-8">
+            <label for="barcode-input" class="block text-lg font-medium text-gray-600 mb-2">
+                Escanee Código de Barras:
+            </label>
+            <input type="text" id="barcode-input" placeholder="Esperando datos..." disabled
+                    class="w-full p-4 text-xl bg-white border-2 border-blue-400 rounded-lg focus:ring-blue-500 focus:border-blue-500 text-gray-800 placeholder-gray-400 transition duration-150 ease-in-out focus:outline-none">
+        </div>
+
+        <!-- Pequeño resultado de validación -->
+        <div id="validation-result" class="text-center font-bold text-lg p-5 rounded-lg border-2 status-pending transition duration-300">
+            Esperando autenticación de Firebase...
+        </div>
+    </div>
+
+    <!-- Overlay de Carga -->
+    <div id="loading-overlay">
+        <div class="spinner"></div>
+        <div id="loading-message">CARGANDO CÓDIGOS DE EVENTBRITE...</div>
+        <div id="loading-page-status" class="text-sm mt-3 opacity-70"></div>
+    </div>
+
+    <!-- Overlay de Resultado a Pantalla Completa -->
+    <div id="result-overlay">
+        <div id="result-icon"></div>
+        <div id="result-text"></div>
+    </div>
+
+    <!-- FIREBASE AND APP LOGIC -->
+    <script type="module">
+        // Importar las funciones necesarias de Firebase
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Establecer el nivel de registro a Debug para ver logs en la consola
+        setLogLevel('Debug');
+
+        // =====================================================================
+        // === CONFIGURACIÓN Y VARIABLES GLOBALES (ADAPTADO PARA USO LOCAL) ===
+        // =====================================================================
+        
+        // 🚨🚨 PARA USO LOCAL: Reemplaza este objeto con tu configuración REAL de Firebase 🚨🚨
+        // Puedes obtener esto desde la consola de Firebase -> Configuración del proyecto -> Tus Apps
+        const YOUR_FIREBASE_CONFIG = {
+            apiKey: "AIzaSyD1v5OCJQffBP7wDwvLd4TQTrL7RirvOZ0",
+            authDomain: "entradas-cd-alberite.firebaseapp.com",
+            projectId: "entradas-cd-alberite",
+            storageBucket: "entradas-cd-alberite.firebasestorage.app",
+            messagingSenderId: "967993893930",
+            appId: "1:967993893930:web:3d7127e11b6906477e0f53"
+        };
+
+        // Lógica para determinar la configuración a usar (Canvas o Local)
+        let firebaseConfig = {};
+        let initialAuthToken = null;
+        let appId = "default-app-id-local"; // ID por defecto para uso local
+
+        const isCanvasEnvironment = typeof __firebase_config !== 'undefined' && __firebase_config && __firebase_config.length > 2;
+
+        if (isCanvasEnvironment) {
+            // Entorno Canvas (usa las variables globales)
+            try {
+                firebaseConfig = JSON.parse(__firebase_config);
+                initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+                appId = typeof __app_id !== 'undefined' ? __app_id : (firebaseConfig.projectId || 'default-app-id');
+            } catch(e) {
+                console.warn("No se pudo parsear __firebase_config del Canvas.", e);
+                // Fallback a la configuración local si el parseo falla.
+            }
+        } 
+        
+        // Si no estamos en Canvas o el parseo falló, usamos la configuración local.
+        if (Object.keys(firebaseConfig).length === 0 && Object.keys(YOUR_FIREBASE_CONFIG).length > 1) {
+             firebaseConfig = YOUR_FIREBASE_CONFIG;
+             appId = YOUR_FIREBASE_CONFIG.projectId || 'default-app-id-local';
+        }
+
+        // CONSTANTES ESPECÍFICAS DE EVENTBRITE
+        const EVENTBRITE_EVENT_ID = '1796505409039';
+        // ADVERTENCIA: La clave API se mantiene por petición del usuario
+        const API_KEY = 'KWI3KSKYDKQ7C6ZLSA2X'; 
+        const API_BASE_URL = `https://www.eventbriteapi.com/v3/events/${EVENTBRITE_EVENT_ID}/attendees/`;
+        
+        // Variables de Firebase
+        let app, db, auth;
+        let userId = null;
+        let isAuthReady = false;
+        
+        // NUEVA CONSTANTE PARA LA RUTA COMPARTIDA DEL EVENTO
+        // Úsala para identificar tu evento en la base de datos (Ej: '2025_liga_alberite')
+        const EVENTO_COMPARTIDO_ID = 'entradas_evento_unico_2025'; 
+
+        // Variables de la UI
+        const barcodeInput = document.getElementById('barcode-input');
+        const resultDiv = document.getElementById('validation-result');
+        const fileStatusDiv = document.getElementById('file-status');
+        const syncButton = document.getElementById('sync-button');
+        const loadingOverlay = document.getElementById('loading-overlay');
+        const loadingPageStatus = document.getElementById('loading-page-status');
+        const resultOverlay = document.getElementById('result-overlay');
+        const resultIcon = document.getElementById('result-icon');
+        const resultText = document.getElementById('result-text');
+        
+        let allAttendees = []; 
+        let isProcessingCode = false; 
+        
+        // Colección de Firestore
+        const COLLECTION_NAME = 'eventbrite_tickets'; 
+        const ROOT_COLLECTION = 'entradas-cdalberite'; // <--- NUEVA CONSTANTE
+
+        /**
+         * Retorna la ruta de la colección en la ruta privada del usuario.
+         * RUTA MODIFICADA: /entradas-cdalberite/{userId}/eventbrite_tickets
+         */
+        /**
+         * Retorna la ruta de la colección COMPARTIDA.
+         * RUTA MODIFICADA: /entradas-cdalberite/{EVENTO_COMPARTIDO_ID}/eventbrite_tickets
+         */
+        function getTicketsCollectionPath() {
+            // Si la aplicación no está lista o autenticada, devolvemos null,
+            // pero la ruta es independiente del UID específico del usuario.
+            if (!isAuthReady) return null; 
+            
+            // La ruta ahora es FÍJA para todos los dispositivos:
+            return `${ROOT_COLLECTION}/${EVENTO_COMPARTIDO_ID}/${COLLECTION_NAME}`;
+        }
+
+        // ---------------------------------------------------------------------
+        // 1. Inicialización y Autenticación de Firebase
+        // ---------------------------------------------------------------------
+
+        // Función personalizada para actualizar la UI y ocultar la carga
+        function initializeUI(success, errorMessage = '') {
+            if (success) {
+                hideLoadingScreen();
+                fileStatusDiv.textContent = `✅ Listo. La validación se hará contra su Cloud Firestore.`;
+                resultDiv.className = 'text-center font-bold text-lg p-5 rounded-lg border-2 status-pending transition duration-300';
+                resultDiv.textContent = '¡Listo para escanear! Sincronice para obtener códigos.';
+            } else {
+                hideLoadingScreen();
+                fileStatusDiv.textContent = `❌ Fallo en la carga. ${errorMessage || 'No hay datos disponibles.'}`;
+                resultDiv.className = 'text-center font-bold text-lg p-5 rounded-lg border-2 status-not-found transition duration-300';
+                resultDiv.textContent = 'ERROR: No hay códigos disponibles.';
+            }
+        }
+
+        try {
+            console.log("Intentando inicializar Firebase. Configuración activa:", firebaseConfig);
+
+            // Verificar si hay una configuración válida
+            if (!firebaseConfig.projectId || !firebaseConfig.apiKey || Object.keys(firebaseConfig).length < 2) {
+                 throw new Error("La configuración de Firebase no está disponible. ¿Reemplazaste YOUR_FIREBASE_CONFIG?");
+            }
+            
+            app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            auth = getAuth(app);
+            
+            async function handleAuth() {
+                try {
+                    // Si el token del Canvas existe, úsalo. Si no, usa autenticación anónima.
+                    if (initialAuthToken) {
+                        await signInWithCustomToken(auth, initialAuthToken);
+                        console.log("Autenticación con token de Canvas exitosa.");
+                    } else {
+                        await signInAnonymously(auth);
+                        console.log("Autenticación anónima exitosa (uso local/fallback).");
+                    }
+                } catch (error) {
+                    console.error("Error durante la autenticación:", error);
+                    fileStatusDiv.textContent = `❌ Error de Auth: ${error.message}`;
+                }
+            }
+
+            onAuthStateChanged(auth, (user) => {
+                const mainApp = document.getElementById('main-app');
+                if (user) {
+                    userId = user.uid;
+                    isAuthReady = true;
+                    document.getElementById('user-id-display').textContent = `ID de Usuario (UID): ${userId}`;
+                    mainApp.style.display = 'block'; 
+                    initializeUI(true); 
+                } else {
+                    // Esto debería ser raro si handleAuth() es exitoso, pero lo mantenemos como seguridad.
+                    userId = crypto.randomUUID(); 
+                    isAuthReady = true;
+                    document.getElementById('user-id-display').textContent = `Anon ID: ${userId} (Acceso limitado)`;
+                    mainApp.style.display = 'block'; 
+                    initializeUI(false, 'No se pudo obtener un token de autenticación válido.'); 
+                }
+            });
+
+            handleAuth();
+
+        } catch (error) {
+            console.error("Error al inicializar Firebase:", error);
+            // Mostrar un error visible en la UI si la inicialización falla
+            fileStatusDiv.textContent = `Error crítico al inicializar Firebase: ${error.message}`;
+            hideLoadingScreen();
+            document.getElementById('main-app').style.display = 'block'; 
+        }
+
+        // ---------------------------------------------------------------------
+        // 2. Control del Spinner y UI
+        // ---------------------------------------------------------------------
+
+        function showLoadingScreen(message = 'CARGANDO CÓDIGOS DE EVENTBRITE...') {
+            loadingOverlay.querySelector('#loading-message').textContent = message;
+            loadingOverlay.style.opacity = '1';
+            loadingOverlay.style.display = 'flex';
+            barcodeInput.disabled = true;
+            syncButton.disabled = true;
+            loadingOverlay.querySelector('#loading-message').style.color = '#1d3557';
+            resultDiv.textContent = message;
+        }
+
+        function hideLoadingScreen() {
+            loadingOverlay.style.opacity = '0';
+            setTimeout(() => {
+                loadingOverlay.style.display = 'none';
+                barcodeInput.disabled = false;
+                syncButton.disabled = false;
+                barcodeInput.focus();
+            }, 500);
+        }
+
+        // ---------------------------------------------------------------------
+        // 3. Flujo de Sincronización API a Firestore
+        // ---------------------------------------------------------------------
+
+        function processAttendeesToTickets(attendees) {
+            return attendees.map(attendee => {
+                let barcode = '';
+                if (attendee.barcodes && attendee.barcodes.length > 0) {
+                    barcode = attendee.barcodes[0].barcode || '';
+                }
+
+                return {
+                    barcode: barcode,
+                    original_status: attendee.status.toUpperCase() || 'N/A',
+                    current_status: 'ATTENDING', 
+                    full_name: `${attendee.profile.first_name || ''} ${attendee.profile.last_name || ''}`.trim(),
+                    email: attendee.profile.email || 'N/A',
+                    checked_in_at: null, 
+                    source: 'Eventbrite'
+                };
+            }).filter(item => item.barcode);
+        }
+
+        async function fetchAttendeesPage(pageNumber) {
+            if (pageNumber === 1) {
+                allAttendees = []; 
+            }
+            const url = `${API_BASE_URL}?page=${pageNumber}`;
+            loadingPageStatus.textContent = `Página: ${pageNumber} | Asistentes cargados: ${allAttendees.length}`;
+
+            try {
+                const response = await fetch(url, {
+                    // IMPORTANTE: Asegúrate de que tu servidor local permite CORS para Eventbrite.
+                    headers: { 'Authorization': `Bearer ${API_KEY}` }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Error ${response.status}: ${response.statusText}`);
+                }
+
+                const data = await response.json();
+                allAttendees = allAttendees.concat(data.attendees);
+                const pagination = data.pagination;
+
+                if (pagination.has_more_items) {
+                    // Implementación simple de Backoff/Delay para evitar saturar la API
+                    await new Promise(resolve => setTimeout(resolve, 500)); 
+                    await fetchAttendeesPage(pagination.page_number + 1);
+                } else {
+                    const ticketsToSave = processAttendeesToTickets(allAttendees);
+                    await saveTicketsToFirestore(ticketsToSave);
+                }
+
+            } catch (error) {
+                console.error("Error al obtener los asistentes de la API:", error);
+                initializeUI(true); 
+                fileStatusDiv.textContent = `❌ Error al sincronizar con Eventbrite: ${error.message}.`;
+            }
+        }
+
+        async function saveTicketsToFirestore(tickets) {
+            const collectionPath = getTicketsCollectionPath();
+            if (!collectionPath) {
+                initializeUI(false, 'Error: No se pudo determinar la ruta de Firestore (Usuario no autenticado).');
+                return;
+            }
+
+            let successfulSaves = 0;
+            const batchSize = 100;
+            
+            for (let i = 0; i < tickets.length; i++) {
+                const ticket = tickets[i];
+                try {
+                    const docRef = doc(db, collectionPath, ticket.barcode);
+                    
+                    // setDoc crea el documento si no existe, o lo sobreescribe/actualiza.
+                    await setDoc(docRef, ticket);
+                    successfulSaves++;
+                } catch (e) {
+                    console.error(`Error al guardar el ticket ${ticket.barcode}:`, e);
+                }
+                
+                if ((i + 1) % batchSize === 0 || i === tickets.length - 1) {
+                    loadingPageStatus.textContent = `Guardando en Firestore... ${successfulSaves} de ${tickets.length} tickets procesados.`;
+                }
+            }
+
+            fileStatusDiv.textContent = `✅ Sincronización completa. ${successfulSaves} códigos guardados/actualizados en Firestore.`;
+            initializeUI(true); 
+        }
+
+        function startSync() {
+            if (!isAuthReady) { // Ahora solo verificamos si Firebase está inicializado
+                showFullscreenResult('Error: Firebase no está autenticado o la configuración es incorrecta.', 'overlay-not-found', '🛑', 3000);
+                return;
+            }
+            showLoadingScreen();
+            loadingPageStatus.textContent = '';
+            fetchAttendeesPage(1);
+        }
+        
+        syncButton.addEventListener('click', startSync);
+
+
+        // ---------------------------------------------------------------------
+        // 4. Lógica de Validación (Consultando y Actualizando Firestore)
+        // ---------------------------------------------------------------------
+        
+        barcodeInput.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+
+                if (isProcessingCode) {
+                    barcodeInput.value = ''; 
+                    return;
+                }
+
+                const scannedBarcode = barcodeInput.value.trim();
+                barcodeInput.value = '';
+
+                if (scannedBarcode && isAuthReady) {
+                    isProcessingCode = true; 
+                    barcodeInput.disabled = true; 
+                    validateTicket(scannedBarcode);
+                } else if (!isAuthReady) {
+                    showFullscreenResult('❌ Espera a que la autenticación de Firebase finalice.', 'overlay-not-found', '🛑', 2000);
+                }
+            }
+        });
+
+        async function validateTicket(barcode) {
+            const collectionPath = getTicketsCollectionPath();
+            if (!collectionPath) {
+                showFullscreenResult('Error de configuración. Vuelva a cargar.', 'overlay-not-found', '🛑', 3000);
+                return;
+            }
+            
+            showLoadingScreen('Validando código en Firestore...');
+            
+            try {
+                // 1. CONSULTAR: Obtener el documento usando el barcode como ID
+                const docRef = doc(db, collectionPath, barcode);
+                const docSnap = await getDoc(docRef);
+
+                if (!docSnap.exists()) {
+                    // CÓDIGO NO ENCONTRADO
+                    showFullscreenResult(`❌ CÓDIGO NO ENCONTRADO`, 'overlay-not-found', '🚫', 2500, barcode);
+                } else {
+                    const ticket = docSnap.data();
+                    const status = ticket.current_status;
+                    
+                    if (status === 'ATTENDING') {
+                        
+                        // 2. ACTUALIZAR: Cambiar estado a CHECKED_IN
+                        await setDoc(docRef, { 
+                            current_status: 'CHECKED_IN', 
+                            checked_in_at: new Date().toISOString(), // Marca de tiempo de validación
+                        }, { merge: true }); 
+                        
+                        // CÓDIGO VÁLIDO Y ACTUALIZADO
+                        const message = `✅ ENTRADA VÁLIDA`;
+                        showFullscreenResult(message, 'overlay-ok', '👍', 2500, barcode);
+
+                    } else if (status === 'CHECKED_IN') {
+                        // CÓDIGO YA USADO
+                        const message = `⚠️ CÓDIGO YA USADO`;
+                        showFullscreenResult(message, 'overlay-used', '⚠️', 2500, barcode);
+                        
+                    } else {
+                        // OTRO ESTADO (e.g., CANCELLED)
+                        const message = `❌ ESTADO INVÁLIDO (${status})`;
+                        showFullscreenResult(message, 'overlay-not-found', '🛑', 2500, barcode);
+                    }
+                }
+                
+            } catch (error) {
+                console.error("Error al validar o actualizar Firestore: ", error);
+                const errorMessage = `Error de conexión/permisos: ${error.message}`;
+                showFullscreenResult(`❌ ERROR CRÍTICO`, 'overlay-not-found', '🛑', 3000, errorMessage);
+            } finally {
+                hideLoadingScreen(); 
+            }
+        }
+
+
+        // ---------------------------------------------------------------------
+        // 5. Utilidades (Overlay)
+        // ---------------------------------------------------------------------
+
+        function showFullscreenResult(mainMessage, className, icon, duration = 2000, barcode = '') {
+
+            resultText.innerHTML = `<span class="block text-5xl sm:text-7xl mb-4">${mainMessage}</span>`;
+            if (barcode) {
+                resultText.innerHTML += `<span class="block text-2xl sm:text-3xl opacity-80 mt-2">${barcode}</span>`;
+            }
+
+            resultIcon.textContent = icon;
+            resultOverlay.className = ''; 
+            resultOverlay.classList.add('flex', className);
+            resultOverlay.style.display = 'flex'; 
+
+            document.getElementById('main-app').style.display = 'none';
+
+            setTimeout(() => {
+                resultOverlay.style.display = 'none'; 
+                document.getElementById('main-app').style.display = 'block'; 
+
+                isProcessingCode = false; 
+                barcodeInput.disabled = false; 
+                barcodeInput.focus(); 
+                resultDiv.textContent = 'Esperando escaneo...';
+                resultDiv.className = 'text-center font-bold text-lg p-5 rounded-lg border-2 status-pending transition duration-300';
+            }, duration);
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+             // La lógica de inicialización y autenticación se encarga de mostrar la app.
+        });
+    </script>
+</body>
+</html>
